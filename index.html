@@ -580,22 +580,34 @@
   //  PERSISTENCIA (localStorage)
   // ============================================================
   const STORAGE_KEY = 'aparthotel_paros_data_v2';
-  function saveData() {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ rooms, history, totalRevenue, operationalTasks })); } catch(e) {}
-  }
-  function loadData() {
+  async function saveData() {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return false;
-      const data = JSON.parse(raw);
-      if (data.rooms) rooms = data.rooms;
-      if (data.history) history = data.history;
-      if (typeof data.totalRevenue === 'number') totalRevenue = data.totalRevenue;
-      if (data.operationalTasks) operationalTasks = data.operationalTasks;
-      // Asegurar que todos los rooms tengan el campo acompanantes
-      rooms.forEach(r => { if (!r.acompanantes) r.acompanantes = []; });
-      return true;
-    } catch(e) { return false; }
+      const datos = { rooms, history, totalRevenue, operationalTasks };
+      await fetch('/api/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(datos)
+      });
+      console.log("Cambios guardados en la nube");
+    } catch(e) {
+      console.error("Error al guardar:", e);
+    }
+  }
+     async function loadData() {
+    try {
+      const response = await fetch('/api/rooms');
+      if (!response.ok) return false;
+      const data = await response.json();
+      if (data) {
+        rooms = data;
+        return true;
+      }
+      return false;
+    } catch (e) {
+      console.error("Error al cargar desde la nube:", e);
+      return false;
+    }
+  }
   }
 
   // ============================================================
@@ -2040,16 +2052,25 @@
   // ============================================================
   //  INICIO
   // ============================================================
-  if (!loadData()) {
-    rooms = generarDepartamentos();
-    operationalTasks = generarTareasEjemplo();
-    history = [];
-    totalRevenue = 0;
-    saveData();
-  }
-  renderAll();
-
-})();
-</script>
-</body>
-</html>
+  // ============================================================
+//  INICIO (CONECTADO A BACKEND PYTHON)
+// ============================================================
+async function initApp() {
+    try {
+        const response = await fetch('/api/rooms');
+        if (!response.ok) throw new Error('Servidor no disponible');
+        rooms = await response.json();
+        renderAll();
+    } catch (err) {
+        console.log("Servidor no conectado, usando datos locales...");
+        if (!loadData()) {
+            rooms = generarDepartamentos();
+            operationalTasks = generarTareasEjemplo();
+            history = [];
+            totalRevenue = 0;
+            saveData();
+        }
+        renderAll();
+    }
+}
+initApp();
