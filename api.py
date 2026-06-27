@@ -1,4 +1,5 @@
 import os
+import uvicorn
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -8,12 +9,14 @@ from main import HotelManager
 app = FastAPI()
 mgr = HotelManager()
 
-# Configuración de Supabase (usando las variables que pondremos en Render)
+# Leemos las variables directamente de Render
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+
+print(f"DEBUG: URL cargada: {SUPABASE_URL}") # Esto nos dirá en los logs si está leyendo algo
+
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Servir archivos estáticos y el index
 app.mount("/static", StaticFiles(directory="."), name="static")
 
 @app.get("/")
@@ -24,13 +27,6 @@ def read_root():
 def get_rooms():
     return [vars(r) for r in mgr.rooms]
 
-@app.get("/api/stats")
-def get_stats():
-    total, available, occupied, rate = mgr.stats()
-    return {
-        "total": total,
-        "available": available,
-        "occupied": occupied,
-        "rate": rate,
-        "revenue": mgr.total_revenue
-    }
+if __name__ == "__main__":
+    # Render exige que el puerto sea el 10000
+    uvicorn.run(app, host="0.0.0.0", port=10000)
