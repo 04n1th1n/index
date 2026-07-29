@@ -3,6 +3,7 @@ import os
 import secrets
 import uvicorn
 from pathlib import Path
+from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.responses import FileResponse
@@ -90,11 +91,27 @@ except Exception as exc:
     )
 
 app = FastAPI(title="Aparthotel Paros")
-basic_auth = HTTPBasic(realm="Aparthotel Paros")
+
+# auto_error=False, and no WWW-Authenticate header on the 401s below, both on
+# purpose: that header is what makes the browser pop its own native login box.
+# The front-end collects credentials itself and sends them as an Authorization
+# header, so a second browser-level prompt would be a duplicate. Turning the
+# header off is the only way to suppress it — the browser reacts to the header,
+# not to the status code.
+basic_auth = HTTPBasic(auto_error=False)
 
 
-def require_login(credentials: HTTPBasicCredentials = Depends(basic_auth)) -> str:
+def require_login(
+    credentials: Optional[HTTPBasicCredentials] = Depends(basic_auth),
+) -> str:
     """Basic auth on every route that touches hotel data."""
+    if credentials is None:
+        # With auto_error=False a missing header arrives as None instead of
+        # raising, so this case is ours to handle.
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Se requieren credenciales",
+        )
     # Compare as bytes: compare_digest rejects non-ASCII str, and the incoming
     # credentials are attacker-controlled. Constant time, so no length leak.
     user_ok = secrets.compare_digest(
@@ -107,7 +124,6 @@ def require_login(credentials: HTTPBasicCredentials = Depends(basic_auth)) -> st
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Credenciales inválidas",
-            headers={"WWW-Authenticate": 'Basic realm="Aparthotel Paros"'},
         )
     return credentials.username
 
@@ -123,7 +139,16 @@ class HotelState(BaseModel):
 
 
 @app.get("/")
-def read_root(_user: str = Depends(require_login)):
+def read_root():
+    """Public: the page itself, no hotel data in it.
+
+    It used to require auth, which meant the browser demanded credentials
+    before handing over the HTML and the app's own login then asked again —
+    two prompts for one login. Serving the shell openly leaves the front-end
+    prompt as the single point of authentication. What it protects is
+    unchanged: every apartment, guest and figure arrives through /api/state,
+    which still requires credentials.
+    """
     return FileResponse(INDEX_FILE)
 
 

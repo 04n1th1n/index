@@ -489,16 +489,99 @@
 
 <script>
 (function() {
-      // Pedir credenciales al usuario al cargar la página
-    const user = prompt("Usuario del sistema:");
-    const pass = prompt("Contraseña:");
-    if (!user || !pass) {
-        alert("Acceso denegado. Recarga la página para intentarlo de nuevo.");
-        return;
+  'use strict';
+
+  // ============================================================
+  //  AUTENTICACIÓN
+  // ============================================================
+  // Única puerta de entrada de la aplicación. El servidor ya no pide
+  // credenciales para servir esta página (api.py sirve '/' sin auth y sus
+  // respuestas 401 no llevan WWW-Authenticate), así que el navegador no
+  // muestra su propio cuadro de login: el de aquí es el único.
+  //
+  // El token se guarda en sessionStorage: sobrevive a recargar la página
+  // (F5) durante el turno y desaparece al cerrar la pestaña. En un equipo
+  // compartido de recepción eso importa, porque el token es la contraseña
+  // en base64, reversible con una línea de código: dejarlo en localStorage
+  // lo mantendría en disco para el siguiente turno y para cualquiera que
+  // use ese navegador. Para que persista entre sesiones, cambia esta línea
+  // por window.localStorage.
+  const AUTH_STORAGE = window.sessionStorage;
+  const AUTH_KEY = 'aparthotel_paros_auth';
+
+  // El almacenamiento lanza en modo privado y con cookies bloqueadas; si
+  // falla, la app sigue funcionando con el token sólo en memoria.
+  let tokenEnMemoria = null;
+
+  function getAuthToken() {
+    if (tokenEnMemoria) return tokenEnMemoria;
+    try {
+      tokenEnMemoria = AUTH_STORAGE.getItem(AUTH_KEY);
+    } catch (e) {
+      console.warn('No hay acceso al almacenamiento del navegador:', e);
     }
-    // Guardar el token para usarlo en saveData() y loadData()
-    window.AUTH_TOKEN = btoa(user + ":" + pass);
-    'use strict';
+    return tokenEnMemoria;
+  }
+
+  function setAuthToken(token) {
+    tokenEnMemoria = token;
+    try {
+      AUTH_STORAGE.setItem(AUTH_KEY, token);
+    } catch (e) {
+      console.warn('El token no se pudo guardar; se pedirá otra vez al recargar.');
+    }
+  }
+
+  function clearAuthToken() {
+    tokenEnMemoria = null;
+    try {
+      AUTH_STORAGE.removeItem(AUTH_KEY);
+    } catch (e) { /* nada que limpiar */ }
+  }
+
+  /** Pide usuario y contraseña y guarda el token. Devuelve null si se cancela. */
+  function pedirCredenciales(motivo) {
+    const user = prompt(motivo || 'Usuario del sistema:');
+    if (!user) return null;
+    const pass = prompt('Contraseña:');
+    if (!pass) return null;
+    const token = btoa(user + ':' + pass);
+    setAuthToken(token);
+    return token;
+  }
+
+  /** Token guardado; si no hay ninguno, lo pide. */
+  function asegurarToken() {
+    return getAuthToken() || pedirCredenciales();
+  }
+
+  /**
+   * fetch con la cabecera Authorization ya puesta.
+   *
+   * Ante un 401 descarta el token guardado y vuelve a pedir credenciales una
+   * sola vez: si estuvieran mal, reintentar en bucle encadenaría prompts sin
+   * fin. Un token invalidado (contraseña cambiada en Render) se corrige así
+   * sin tener que vaciar el almacenamiento a mano.
+   */
+  async function fetchAutenticado(url, opciones) {
+    let token = asegurarToken();
+    if (!token) throw new Error('Se requieren credenciales para continuar');
+
+    const enviar = (t) => fetch(url, Object.assign({}, opciones, {
+      headers: Object.assign({}, (opciones && opciones.headers) || {}, {
+        'Authorization': 'Basic ' + t
+      })
+    }));
+
+    let respuesta = await enviar(token);
+    if (respuesta.status === 401) {
+      clearAuthToken();
+      token = pedirCredenciales('Credenciales incorrectas. Usuario del sistema:');
+      if (!token) throw new Error('Se requieren credenciales para continuar');
+      respuesta = await enviar(token);
+    }
+    return respuesta;
+  }
 
   // ============================================================
   //  CONFIGURACIÓN Y CONSTANTES
@@ -593,18 +676,16 @@
       { id: 't11', roomNumber: '108', category: 'incidencias', title: 'Llave magnética defectuosa', details: 'Huésped no puede ingresar', responsible: 'Recepción', date: hoy, priority: 'media', status: 'En revisión' }
     ];
   }
-// PERSISTENCIA (localStorage)
-const STORAGE_KEY = 'aparthotel_paros_data_v2';
+// PERSISTENCIA (backend Python + Supabase)
 
 async function saveData() {
     try {
         const datos = { rooms, history, totalRevenue, operationalTasks };
-        const response = await fetch('/api/update', {
+        // El token sale del almacenamiento; sólo se piden credenciales si no
+        // hay ninguno guardado o si el servidor lo rechaza.
+        const response = await fetchAutenticado('/api/update', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': 'Basic ' + window.AUTH_TOKEN
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(datos)
         });
         if (!response.ok) throw new Error('HTTP ' + response.status);
@@ -620,10 +701,7 @@ async function saveData() {
 // devuelve false cuando la respuesta es válida pero todavía no hay datos.
 async function loadData() {
 
-    const response = await fetch('/api/state', {
-        method: 'GET',
-        headers: { 'Authorization': 'Basic ' + window.AUTH_TOKEN }
-    });
+    const response = await fetchAutenticado('/api/state', { method: 'GET' });
 
     if (!response.ok) throw new Error('Servidor no disponible: HTTP ' + response.status);
 
@@ -2094,17 +2172,13 @@ function showConfirm(title, text) {
   //  INICIO (CONECTADO A BACKEND PYTHON)
   // ============================================================
   async function initApp() {
-        // 1. Pedir credenciales
-    const user = prompt("Usuario:");
-    const password = prompt("Contraseña:");
-    if (!user || !password) {
-        showToast('Acceso denegado: se requieren credenciales', 'error');
-        return;
+    // Un único punto de login: si ya hay token de esta sesión no se pregunta
+    // nada, y si no lo hay se pide una sola vez aquí.
+    if (!asegurarToken()) {
+      showToast('Acceso denegado: se requieren credenciales', 'error');
+      return;
     }
-    // 2. Crear el token en memoria
-    const AUTH_TOKEN = btoa(`${user}:${password}`);
-    // 3. Guardarlo en el objeto 'window' para que saveData() y loadData() puedan acceder a él
-    window.AUTH_TOKEN = AUTH_TOKEN;try {
+    try {
       const hasData = await loadData();
       if (!hasData) {
         // Primer arranque: sembramos el edificio y lo subimos a la nube.

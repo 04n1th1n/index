@@ -64,9 +64,10 @@ fails — to see real data you must go through the server.
 - `main.py` — `HotelManager` owns all state (`rooms`, `history`, `total_revenue`,
   `guest_history`) and operations; module-level functions render the menu views.
 - `api.py` — FastAPI backend for the web dashboard. HTTP Basic auth on every route
-  that touches hotel data, serves `index.html` at `/`, and stores the entire state
-  as one JSON blob in Supabase (table `hotel_data`, always row `id = 1`). It does
-  **not** import `HotelManager` and never touches `data.json`.
+  that touches hotel data (`/api/state`, `/api/update`), serves `index.html` at `/`
+  without auth, and stores the entire state as one JSON blob in Supabase (table
+  `hotel_data`, always row `id = 1`). It does **not** import `HotelManager` and
+  never touches `data.json`.
 
 Key structural facts to know before editing:
 
@@ -140,7 +141,33 @@ Three things that fail in confusing ways:
 the three PWA routes (`/manifest.json`, `/service-worker.js`, `/icons/{name}`):
 the browser fetches a manifest without credentials by default, and a service
 worker that 401s on update stops updating silently. They carry no hotel data.
-Everything else requires auth.
+
+**`GET /` is public too, and that is what keeps the login to a single prompt.**
+When it required auth, the browser demanded credentials before releasing the HTML
+and the app's own login then asked again. The page is only the shell — every
+apartment, guest and figure comes through `/api/state`, which still requires
+credentials. Two rules keep the browser's native dialog away, and breaking either
+brings the double prompt straight back:
+
+- `basic_auth = HTTPBasic(auto_error=False)`, so FastAPI doesn't emit its own 401.
+- **No `WWW-Authenticate` header on any 401.** The browser pops its login box in
+  response to that header, not to the status code.
+
+## Front-end authentication
+
+One prompt, in `pedirCredenciales()`. The token is `btoa('user:pass')` — the
+password in base64, trivially reversible, not a hash.
+
+- It lives in **`sessionStorage`** (`AUTH_STORAGE`, near the top of the IIFE):
+  survives F5 during a shift, gone when the tab closes. Reception machines are
+  shared, so `localStorage` would leave the password on disk for the next shift.
+  Switching is a one-line change, deliberately.
+- Every call goes through `fetchAutenticado()`, which attaches the header and,
+  on a 401, clears the stored token and re-prompts **once**. Retrying in a loop
+  would chain prompts forever when the password is simply wrong.
+- Storage access is wrapped in try/catch and mirrored in `tokenEnMemoria`:
+  private mode and blocked cookies make `sessionStorage` throw, and the app
+  still has to work.
 
 There is deliberately no `StaticFiles` mount, since mounting the project directory
 would expose `data.json`, `api.py` and any `.env` file. Each servable file gets its
