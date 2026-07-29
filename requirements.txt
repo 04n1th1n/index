@@ -1,0 +1,8 @@
+# Dependencias del backend web (api.py).
+# main.py y app_gui.py no necesitan nada: solo usan la libreria estandar.
+#
+# Este archivo DEBE estar en UTF-8. En PowerShell, `>` y `Out-File` escriben
+# UTF-16 y pip lo rechaza al desplegar. Usa: Out-File -Encoding utf8
+fastapi==0.115.0
+uvicorn==0.30.0
+supabase==2.5.0

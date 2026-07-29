@@ -1,0 +1,25 @@
+# Entorno virtual: se reconstruye con `pip install -r requirements.txt`
+venv/
+.venv/
+env/
+
+# Cache de Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Credenciales: NUNCA subir. Las variables reales viven en Render.
+.env
+.env.local
+*.key
+
+# Estado de ejecucion, no codigo: main.py lo regenera si falta
+data.json
+backups/
+
+# Editores y sistema operativo
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+desktop.ini
