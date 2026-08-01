@@ -414,6 +414,8 @@
     @media (max-width:900px) { .main-content { grid-template-columns:1fr; } .header { flex-direction:column; align-items:stretch; } .search-container { min-width:unset; } .stats-bar { grid-template-columns:repeat(2,1fr); } .floor-rooms { grid-template-columns:repeat(auto-fill, minmax(140px,1fr)); } }
     @media (max-width:500px) { .app { padding:var(--sp-md); } .stats-bar { grid-template-columns:1fr 1fr; } .floor-rooms { grid-template-columns:repeat(2,1fr); } .tab-btn { font-size:0.65rem; padding:4px 10px; } }
   </style>
+  <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-database.js"></script>
 </head>
 <body>
 <div class="app" id="app">
@@ -480,6 +482,23 @@
 <script>
 (function() {
   'use strict';
+
+  // ============================================================
+  //  FIREBASE INITIALIZATION
+  // ============================================================
+  const firebaseConfig = {
+    apiKey: "AIzaSyA6rq8ydF83NmuOtq0bf5mWm7Ac3f_iHA0",
+    authDomain: "aparthotel-paros.firebaseapp.com",
+    databaseURL: "https://aparthotel-paros-default-rtdb.firebaseio.com",
+    projectId: "aparthotel-paros",
+    storageBucket: "aparthotel-paros.firebasestorage.app",
+    messagingSenderId: "922118369722",
+    appId: "1:922118369722:web:2a360e6c953f9650716d83",
+    measurementId: "G-Y4VN1GLQz7"
+  };
+  const app = firebase.initializeApp(firebaseConfig);
+  const db = firebase.database(app);
+  let firebaseReady = false;
 
   // ============================================================
   //  CONFIGURACIÓN Y CONSTANTES
@@ -576,25 +595,69 @@
   }
 
   // ============================================================
-  //  PERSISTENCIA (localStorage)
+  //  PERSISTENCIA (Firebase Realtime Database)
   // ============================================================
-  const STORAGE_KEY = 'aparthotel_paros_data_v2';
   function saveData() {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ rooms, history, totalRevenue, operationalTasks })); } catch(e) {}
-  }
-  function loadData() {
+    if (!firebaseReady) {
+      try { localStorage.setItem('aparthotel_paros_backup', JSON.stringify({ rooms, history, totalRevenue, operationalTasks })); } catch(e) {}
+      return;
+    }
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return false;
-      const data = JSON.parse(raw);
-      if (data.rooms) rooms = data.rooms;
-      if (data.history) history = data.history;
-      if (typeof data.totalRevenue === 'number') totalRevenue = data.totalRevenue;
-      if (data.operationalTasks) operationalTasks = data.operationalTasks;
-      // Asegurar que todos los rooms tengan el campo acompanantes
-      rooms.forEach(r => { if (!r.acompanantes) r.acompanantes = []; });
-      return true;
-    } catch(e) { return false; }
+      const dataRef = db.ref('aparthotel-data');
+      dataRef.set({ rooms, history, totalRevenue, operationalTasks }).catch(e => {
+        console.error('Error guardando en Firebase:', e);
+        try { localStorage.setItem('aparthotel_paros_backup', JSON.stringify({ rooms, history, totalRevenue, operationalTasks })); } catch(le) {}
+      });
+    } catch(e) { console.error('Error en saveData:', e); }
+  }
+
+  function loadData() {
+    return new Promise((resolve) => {
+      const dataRef = db.ref('aparthotel-data');
+      dataRef.once('value', (snapshot) => {
+        try {
+          const data = snapshot.val();
+          if (data && data.rooms) {
+            rooms = data.rooms;
+            history = data.history || [];
+            totalRevenue = data.totalRevenue || 0;
+            operationalTasks = data.operationalTasks || [];
+            rooms.forEach(r => { if (!r.acompanantes) r.acompanantes = []; });
+            firebaseReady = true;
+            resolve(true);
+          } else {
+            firebaseReady = true;
+            resolve(false);
+          }
+        } catch(e) {
+          console.error('Error cargando datos:', e);
+          firebaseReady = true;
+          resolve(false);
+        }
+      }).catch(e => {
+        console.error('Error en loadData:', e);
+        firebaseReady = true;
+        resolve(false);
+      });
+    });
+  }
+
+  function setupRealtimeSync() {
+    if (!firebaseReady) return;
+    const dataRef = db.ref('aparthotel-data');
+    dataRef.on('value', (snapshot) => {
+      try {
+        const data = snapshot.val();
+        if (data && data.rooms) {
+          rooms = data.rooms;
+          history = data.history || [];
+          totalRevenue = data.totalRevenue || 0;
+          operationalTasks = data.operationalTasks || [];
+          rooms.forEach(r => { if (!r.acompanantes) r.acompanantes = []; });
+          renderAll();
+        }
+      } catch(e) { console.error('Error en sincronización:', e); }
+    });
   }
 
   // ============================================================
@@ -2037,14 +2100,18 @@
   // ============================================================
   //  INICIO
   // ============================================================
-  if (!loadData()) {
-    rooms = generarDepartamentos();
-    operationalTasks = generarTareasEjemplo();
-    history = [];
-    totalRevenue = 0;
-    saveData();
-  }
-  renderAll();
+  (async () => {
+    const dataLoaded = await loadData();
+    if (!dataLoaded) {
+      rooms = generarDepartamentos();
+      operationalTasks = generarTareasEjemplo();
+      history = [];
+      totalRevenue = 0;
+      saveData();
+    }
+    renderAll();
+    setupRealtimeSync();
+  })();
 
 })();
 </script>
