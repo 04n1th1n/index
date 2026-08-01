@@ -499,6 +499,7 @@
   const app = firebase.initializeApp(firebaseConfig);
   const db = firebase.database(app);
   let firebaseReady = false;
+  console.log('Firebase inicializado:', { projectId: firebaseConfig.projectId, databaseURL: firebaseConfig.databaseURL });
 
   // ============================================================
   //  CONFIGURACIÓN Y CONSTANTES
@@ -598,13 +599,18 @@
   //  PERSISTENCIA (Firebase Realtime Database)
   // ============================================================
   function saveData() {
+    console.log('saveData() llamada, firebaseReady:', firebaseReady);
     if (!firebaseReady) {
+      console.log('Firebase no listo, usando localStorage');
       try { localStorage.setItem('aparthotel_paros_backup', JSON.stringify({ rooms, history, totalRevenue, operationalTasks })); } catch(e) {}
       return;
     }
     try {
+      console.log('Guardando en Firebase...');
       const dataRef = db.ref('aparthotel-data');
-      dataRef.set({ rooms, history, totalRevenue, operationalTasks }).catch(e => {
+      dataRef.set({ rooms, history, totalRevenue, operationalTasks }).then(() => {
+        console.log('Datos guardados en Firebase correctamente');
+      }).catch(e => {
         console.error('Error guardando en Firebase:', e);
         try { localStorage.setItem('aparthotel_paros_backup', JSON.stringify({ rooms, history, totalRevenue, operationalTasks })); } catch(le) {}
       });
@@ -612,11 +618,13 @@
   }
 
   function loadData() {
+    console.log('loadData() iniciada');
     return new Promise((resolve) => {
       const dataRef = db.ref('aparthotel-data');
       dataRef.once('value', (snapshot) => {
         try {
           const data = snapshot.val();
+          console.log('Datos recibidos de Firebase:', data);
           if (data && data.rooms) {
             rooms = data.rooms;
             history = data.history || [];
@@ -624,9 +632,11 @@
             operationalTasks = data.operationalTasks || [];
             rooms.forEach(r => { if (!r.acompanantes) r.acompanantes = []; });
             firebaseReady = true;
+            console.log('Datos cargados correctamente, firebaseReady = true');
             resolve(true);
           } else {
             firebaseReady = true;
+            console.log('No hay datos en Firebase, usando valores por defecto');
             resolve(false);
           }
         } catch(e) {
@@ -635,7 +645,7 @@
           resolve(false);
         }
       }).catch(e => {
-        console.error('Error en loadData:', e);
+        console.error('Error en loadData (catch):', e);
         firebaseReady = true;
         resolve(false);
       });
