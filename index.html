@@ -414,8 +414,6 @@
     @media (max-width:900px) { .main-content { grid-template-columns:1fr; } .header { flex-direction:column; align-items:stretch; } .search-container { min-width:unset; } .stats-bar { grid-template-columns:repeat(2,1fr); } .floor-rooms { grid-template-columns:repeat(auto-fill, minmax(140px,1fr)); } }
     @media (max-width:500px) { .app { padding:var(--sp-md); } .stats-bar { grid-template-columns:1fr 1fr; } .floor-rooms { grid-template-columns:repeat(2,1fr); } .tab-btn { font-size:0.65rem; padding:4px 10px; } }
   </style>
-  <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-app.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-database.js"></script>
 </head>
 <body>
 <div class="app" id="app">
@@ -484,22 +482,11 @@
   'use strict';
 
   // ============================================================
-  //  FIREBASE INITIALIZATION
+  //  API CONFIGURATION (Render Backend)
   // ============================================================
-  const firebaseConfig = {
-    apiKey: "AIzaSyA6rq8ydF83NmuOtq0bf5mWm7Ac3f_iHA0",
-    authDomain: "aparthotel-paros.firebaseapp.com",
-    databaseURL: "https://aparthotel-paros-default-rtdb.firebaseio.com",
-    projectId: "aparthotel-paros",
-    storageBucket: "aparthotel-paros.firebasestorage.app",
-    messagingSenderId: "922118369722",
-    appId: "1:922118369722:web:2a360e6c953f9650716d83",
-    measurementId: "G-Y4VN1GLQz7"
-  };
-  const app = firebase.initializeApp(firebaseConfig);
-  const db = firebase.database(app);
-  let firebaseReady = false;
-  console.log('Firebase inicializado:', { projectId: firebaseConfig.projectId, databaseURL: firebaseConfig.databaseURL });
+  const API_URL = 'https://index-omz3.onrender.com';
+  let apiAuth = null;
+  let syncInterval = null;
 
   // ============================================================
   //  CONFIGURACIÓN Y CONSTANTES
@@ -599,75 +586,80 @@
   //  PERSISTENCIA (Firebase Realtime Database)
   // ============================================================
   function saveData() {
-    console.log('saveData() llamada, firebaseReady:', firebaseReady);
-    if (!firebaseReady) {
-      console.log('Firebase no listo, usando localStorage');
-      try { localStorage.setItem('aparthotel_paros_backup', JSON.stringify({ rooms, history, totalRevenue, operationalTasks })); } catch(e) {}
-      return;
-    }
-    try {
-      console.log('Guardando en Firebase...');
-      const dataRef = db.ref('aparthotel-data');
-      dataRef.set({ rooms, history, totalRevenue, operationalTasks }).then(() => {
-        console.log('Datos guardados en Firebase correctamente');
-      }).catch(e => {
-        console.error('Error guardando en Firebase:', e);
-        try { localStorage.setItem('aparthotel_paros_backup', JSON.stringify({ rooms, history, totalRevenue, operationalTasks })); } catch(le) {}
-      });
-    } catch(e) { console.error('Error en saveData:', e); }
+    if (!apiAuth) return;
+    const auth = 'Basic ' + btoa(apiAuth.user + ':' + apiAuth.pass);
+    fetch(API_URL + '/api/update', {
+      method: 'POST',
+      headers: {
+        'Authorization': auth,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ rooms, history, totalRevenue, operationalTasks }),
+    }).catch(e => console.error('Error guardando:', e));
   }
 
   function loadData() {
-    console.log('loadData() iniciada');
     return new Promise((resolve) => {
-      const dataRef = db.ref('aparthotel-data');
-      dataRef.once('value', (snapshot) => {
-        try {
-          const data = snapshot.val();
-          console.log('Datos recibidos de Firebase:', data);
+      if (!apiAuth) {
+        resolve(false);
+        return;
+      }
+      const auth = 'Basic ' + btoa(apiAuth.user + ':' + apiAuth.pass);
+      fetch(API_URL + '/api/state', {
+        headers: { 'Authorization': auth },
+      })
+        .then(r => {
+          if (r.status === 401) {
+            apiAuth = null;
+            resolve(false);
+            return null;
+          }
+          return r.json();
+        })
+        .then(data => {
+          if (!data) return;
+          rooms = data.rooms || [];
+          history = data.history || [];
+          totalRevenue = data.totalRevenue || 0;
+          operationalTasks = data.operationalTasks || [];
+          rooms.forEach(r => { if (!r.acompanantes) r.acompanantes = []; });
+          resolve(!!rooms.length);
+        })
+        .catch(e => {
+          console.error('Error cargando:', e);
+          resolve(false);
+        });
+    });
+  }
+
+  function setupRealtimeSync() {
+    if (!apiAuth) return;
+    syncInterval = setInterval(() => {
+      const auth = 'Basic ' + btoa(apiAuth.user + ':' + apiAuth.pass);
+      fetch(API_URL + '/api/state', {
+        headers: { 'Authorization': auth },
+      })
+        .then(r => r.json())
+        .then(data => {
           if (data && data.rooms) {
             rooms = data.rooms;
             history = data.history || [];
             totalRevenue = data.totalRevenue || 0;
             operationalTasks = data.operationalTasks || [];
-            rooms.forEach(r => { if (!r.acompanantes) r.acompanantes = []; });
-            firebaseReady = true;
-            console.log('Datos cargados correctamente, firebaseReady = true');
-            resolve(true);
-          } else {
-            firebaseReady = true;
-            console.log('No hay datos en Firebase, usando valores por defecto');
-            resolve(false);
+            renderAll();
           }
-        } catch(e) {
-          console.error('Error cargando datos:', e);
-          firebaseReady = true;
-          resolve(false);
-        }
-      }).catch(e => {
-        console.error('Error en loadData (catch):', e);
-        firebaseReady = true;
-        resolve(false);
-      });
-    });
+        })
+        .catch(e => console.error('Error sincronizando:', e));
+    }, 5000);
   }
 
-  function setupRealtimeSync() {
-    if (!firebaseReady) return;
-    const dataRef = db.ref('aparthotel-data');
-    dataRef.on('value', (snapshot) => {
-      try {
-        const data = snapshot.val();
-        if (data && data.rooms) {
-          rooms = data.rooms;
-          history = data.history || [];
-          totalRevenue = data.totalRevenue || 0;
-          operationalTasks = data.operationalTasks || [];
-          rooms.forEach(r => { if (!r.acompanantes) r.acompanantes = []; });
-          renderAll();
-        }
-      } catch(e) { console.error('Error en sincronización:', e); }
-    });
+  function pedirCredenciales() {
+    const user = prompt('Usuario:');
+    if (!user) return false;
+    const pass = prompt('Contraseña:');
+    if (!pass) return false;
+    apiAuth = { user, pass };
+    return true;
   }
 
   // ============================================================
@@ -2111,6 +2103,10 @@
   //  INICIO
   // ============================================================
   (async () => {
+    if (!pedirCredenciales()) {
+      showToast('Se requieren credenciales', 'error');
+      return;
+    }
     const dataLoaded = await loadData();
     if (!dataLoaded) {
       rooms = generarDepartamentos();
@@ -2121,6 +2117,7 @@
     }
     renderAll();
     setupRealtimeSync();
+    showToast('Conectado al servidor', 'success');
   })();
 
 })();
