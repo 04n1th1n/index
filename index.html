@@ -1982,13 +1982,20 @@
   function renderHistory() {
     const monthStart = new Date(revenueMonth.getFullYear(), revenueMonth.getMonth(), 1);
     const monthEnd = new Date(revenueMonth.getFullYear(), revenueMonth.getMonth() + 1, 0);
+    console.log('renderHistory: total history items =', history.length, 'totalRevenue =', totalRevenue);
     const filteredHistory = history.filter(h => {
-      if (!h.timestamp) return false;
+      if (!h.timestamp) {
+        console.warn('Item sin timestamp:', h);
+        return false;
+      }
       const d = new Date(h.timestamp);
-      return d >= monthStart && d <= monthEnd;
+      const isInMonth = d >= monthStart && d <= monthEnd;
+      if (isInMonth) console.log('Historia incluida:', h);
+      return isInMonth;
     });
+    console.log('Historial filtrado:', filteredHistory.length, 'items');
 
-    const monthTotal = filteredHistory.reduce((sum, h) => sum + h.total, 0);
+    const monthTotal = filteredHistory.reduce((sum, h) => sum + (h.total || 0), 0);
     $('revenueMonthTotal').textContent = currencyFormatter.format(monthTotal);
     $('revenueMonthLabel').textContent = formatMonthYear(revenueMonth);
 
@@ -2109,7 +2116,7 @@
       showToast('Clave incorrecta', 'error');
       return;
     }
-    const ok = await showConfirm('Desocupar departamentos', 'Se dejarán todos los departamentos sin ocupar. ¿Continuar?');
+    const ok = await showConfirm('Desocupar departamentos', 'Se dejarán todos los departamentos sin ocupar y se limpiarán los ingresos. ¿Continuar?');
     if (!ok) return;
     rooms.forEach(room => {
       room.status = 'available';
@@ -2124,9 +2131,13 @@
       room.acompanantes = [];
       room.notes = '';
     });
+    history = [];
+    totalRevenue = 0;
+    revenueMonth = new Date();
+    revenueMonth.setDate(1);
     saveData();
     renderAll();
-    showToast('Todos los departamentos están disponibles', 'success');
+    showToast('Sistema reiniciado - Departamentos disponibles e ingresos en cero', 'success');
   });
 
   // ============================================================
