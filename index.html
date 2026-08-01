@@ -586,16 +586,31 @@
   //  PERSISTENCIA (Firebase Realtime Database)
   // ============================================================
   function saveData() {
-    if (!apiAuth) return;
+    if (!apiAuth) {
+      console.warn('saveData: Sin autenticación');
+      return;
+    }
     const auth = 'Basic ' + btoa(apiAuth.user + ':' + apiAuth.pass);
+    const payload = { rooms, history, totalRevenue, operationalTasks };
+    console.log('Guardando datos:', { totalRevenue, historyLength: history.length });
     fetch(API_URL + '/api/update', {
       method: 'POST',
       headers: {
         'Authorization': auth,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ rooms, history, totalRevenue, operationalTasks }),
-    }).catch(e => console.error('Error guardando:', e));
+      body: JSON.stringify(payload),
+    })
+      .then(r => {
+        if (r.status === 200 || r.status === 201) {
+          console.log('Datos guardados correctamente');
+          return r.json();
+        } else {
+          console.error('Error guardando (status ' + r.status + ')');
+          throw new Error('Status ' + r.status);
+        }
+      })
+      .catch(e => console.error('Error guardando:', e));
   }
 
   function loadData() {
@@ -639,18 +654,33 @@
       fetch(API_URL + '/api/state', {
         headers: { 'Authorization': auth },
       })
-        .then(r => r.json())
+        .then(r => {
+          if (r.status === 401) {
+            console.error('Autenticación expirada');
+            apiAuth = null;
+            clearInterval(syncInterval);
+            return null;
+          }
+          return r.json();
+        })
         .then(data => {
+          if (!data) return;
+          const oldRevenue = totalRevenue;
           if (data && data.rooms) {
             rooms = data.rooms;
             history = data.history || [];
             totalRevenue = data.totalRevenue || 0;
             operationalTasks = data.operationalTasks || [];
-            renderAll();
+
+            // Rerender si cambió algo
+            if (oldRevenue !== totalRevenue || history.length > 0) {
+              console.log('Sincronización: totalRevenue =', totalRevenue);
+              renderAll();
+            }
           }
         })
         .catch(e => console.error('Error sincronizando:', e));
-    }, 5000);
+    }, 2000);
   }
 
   function pedirCredenciales() {
