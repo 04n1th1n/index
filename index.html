@@ -4,15 +4,6 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Aparthotel Paros · Sistema de Gestión</title>
-
-  <!-- PWA: instalable y con arranque offline -->
-  <link rel="manifest" href="/manifest.json" />
-  <meta name="theme-color" content="#060a14" />
-  <!-- iOS ignora el manifest: necesita sus propias etiquetas -->
-  <link rel="apple-touch-icon" href="/icons/icon-192.png" />
-  <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="Paros" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet" />
@@ -474,7 +465,6 @@
         </div>
         <div class="history-list" id="historyList"></div>
         <div class="backup-actions">
-          <button class="btn btn--ghost" id="exportBtn"><i class="fas fa-download"></i> Exportar (JSON)</button>
           <button class="btn btn--excel" id="exportExcelBtn"><i class="fas fa-file-excel"></i> Exportar a Excel</button>
           <button class="btn btn--ghost" id="resetBtn"><i class="fas fa-trash-alt"></i> Reiniciar</button>
         </div>
@@ -492,96 +482,11 @@
   'use strict';
 
   // ============================================================
-  //  AUTENTICACIÓN
+  //  API CONFIGURATION (Render Backend)
   // ============================================================
-  // Única puerta de entrada de la aplicación. El servidor ya no pide
-  // credenciales para servir esta página (api.py sirve '/' sin auth y sus
-  // respuestas 401 no llevan WWW-Authenticate), así que el navegador no
-  // muestra su propio cuadro de login: el de aquí es el único.
-  //
-  // El token se guarda en sessionStorage: sobrevive a recargar la página
-  // (F5) durante el turno y desaparece al cerrar la pestaña. En un equipo
-  // compartido de recepción eso importa, porque el token es la contraseña
-  // en base64, reversible con una línea de código: dejarlo en localStorage
-  // lo mantendría en disco para el siguiente turno y para cualquiera que
-  // use ese navegador. Para que persista entre sesiones, cambia esta línea
-  // por window.localStorage.
-  const AUTH_STORAGE = window.sessionStorage;
-  const AUTH_KEY = 'aparthotel_paros_auth';
-
-  // El almacenamiento lanza en modo privado y con cookies bloqueadas; si
-  // falla, la app sigue funcionando con el token sólo en memoria.
-  let tokenEnMemoria = null;
-
-  function getAuthToken() {
-    if (tokenEnMemoria) return tokenEnMemoria;
-    try {
-      tokenEnMemoria = AUTH_STORAGE.getItem(AUTH_KEY);
-    } catch (e) {
-      console.warn('No hay acceso al almacenamiento del navegador:', e);
-    }
-    return tokenEnMemoria;
-  }
-
-  function setAuthToken(token) {
-    tokenEnMemoria = token;
-    try {
-      AUTH_STORAGE.setItem(AUTH_KEY, token);
-    } catch (e) {
-      console.warn('El token no se pudo guardar; se pedirá otra vez al recargar.');
-    }
-  }
-
-  function clearAuthToken() {
-    tokenEnMemoria = null;
-    try {
-      AUTH_STORAGE.removeItem(AUTH_KEY);
-    } catch (e) { /* nada que limpiar */ }
-  }
-
-  /** Pide usuario y contraseña y guarda el token. Devuelve null si se cancela. */
-  function pedirCredenciales(motivo) {
-    const user = prompt(motivo || 'Usuario del sistema:');
-    if (!user) return null;
-    const pass = prompt('Contraseña:');
-    if (!pass) return null;
-    const token = btoa(user + ':' + pass);
-    setAuthToken(token);
-    return token;
-  }
-
-  /** Token guardado; si no hay ninguno, lo pide. */
-  function asegurarToken() {
-    return getAuthToken() || pedirCredenciales();
-  }
-
-  /**
-   * fetch con la cabecera Authorization ya puesta.
-   *
-   * Ante un 401 descarta el token guardado y vuelve a pedir credenciales una
-   * sola vez: si estuvieran mal, reintentar en bucle encadenaría prompts sin
-   * fin. Un token invalidado (contraseña cambiada en Render) se corrige así
-   * sin tener que vaciar el almacenamiento a mano.
-   */
-  async function fetchAutenticado(url, opciones) {
-    let token = asegurarToken();
-    if (!token) throw new Error('Se requieren credenciales para continuar');
-
-    const enviar = (t) => fetch(url, Object.assign({}, opciones, {
-      headers: Object.assign({}, (opciones && opciones.headers) || {}, {
-        'Authorization': 'Basic ' + t
-      })
-    }));
-
-    let respuesta = await enviar(token);
-    if (respuesta.status === 401) {
-      clearAuthToken();
-      token = pedirCredenciales('Credenciales incorrectas. Usuario del sistema:');
-      if (!token) throw new Error('Se requieren credenciales para continuar');
-      respuesta = await enviar(token);
-    }
-    return respuesta;
-  }
+  const API_URL = 'https://index-omz3.onrender.com';
+  let apiAuth = null;
+  let syncInterval = null;
 
   // ============================================================
   //  CONFIGURACIÓN Y CONSTANTES
@@ -676,70 +581,128 @@
       { id: 't11', roomNumber: '108', category: 'incidencias', title: 'Llave magnética defectuosa', details: 'Huésped no puede ingresar', responsible: 'Recepción', date: hoy, priority: 'media', status: 'En revisión' }
     ];
   }
-// PERSISTENCIA (backend Python + Supabase)
 
-async function saveData() {
-    try {
-        const datos = { rooms, history, totalRevenue, operationalTasks };
-        // El token sale del almacenamiento; sólo se piden credenciales si no
-        // hay ninguno guardado o si el servidor lo rechaza.
-        const response = await fetchAutenticado('/api/update', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(datos)
+  // ============================================================
+  //  PERSISTENCIA (Firebase Realtime Database)
+  // ============================================================
+  function saveData() {
+    if (!apiAuth) {
+      console.warn('saveData: Sin autenticación');
+      return;
+    }
+    const auth = 'Basic ' + btoa(apiAuth.user + ':' + apiAuth.pass);
+    const payload = { rooms, history, totalRevenue, operationalTasks };
+    console.log('Guardando datos:', { totalRevenue, historyLength: history.length });
+    fetch(API_URL + '/api/update', {
+      method: 'POST',
+      headers: {
+        'Authorization': auth,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    })
+      .then(r => {
+        if (r.status === 200 || r.status === 201) {
+          console.log('Datos guardados correctamente');
+          return r.json();
+        } else {
+          console.error('Error guardando (status ' + r.status + ')');
+          throw new Error('Status ' + r.status);
+        }
+      })
+      .catch(e => console.error('Error guardando:', e));
+  }
+
+  function loadData() {
+    return new Promise((resolve) => {
+      if (!apiAuth) {
+        resolve(false);
+        return;
+      }
+      const auth = 'Basic ' + btoa(apiAuth.user + ':' + apiAuth.pass);
+      fetch(API_URL + '/api/state', {
+        headers: { 'Authorization': auth },
+      })
+        .then(r => {
+          if (r.status === 401) {
+            apiAuth = null;
+            resolve(false);
+            return null;
+          }
+          return r.json();
+        })
+        .then(data => {
+          if (!data) return;
+          rooms = data.rooms || [];
+          history = data.history || [];
+          totalRevenue = data.totalRevenue || 0;
+          operationalTasks = data.operationalTasks || [];
+          rooms.forEach(r => { if (!r.acompanantes) r.acompanantes = []; });
+          resolve(!!rooms.length);
+        })
+        .catch(e => {
+          console.error('Error cargando:', e);
+          resolve(false);
         });
-        if (!response.ok) throw new Error('HTTP ' + response.status);
-        console.log("Cambios guardados en la nube");
-        return true;
-    } catch (e) {
-        console.error("Error al guardar:", e);
-        showToast('No se pudieron guardar los cambios en la nube', 'error');
-        return false;
-    }
-}
-// Trae el estado completo del servidor. Lanza si el servidor no responde;
-// devuelve false cuando la respuesta es válida pero todavía no hay datos.
-async function loadData() {
+    });
+  }
 
-    const response = await fetchAutenticado('/api/state', { method: 'GET' });
+  function setupRealtimeSync() {
+    if (!apiAuth) return;
+    syncInterval = setInterval(() => {
+      const auth = 'Basic ' + btoa(apiAuth.user + ':' + apiAuth.pass);
+      fetch(API_URL + '/api/state', {
+        headers: { 'Authorization': auth },
+      })
+        .then(r => {
+          if (r.status === 401) {
+            console.error('Autenticación expirada');
+            apiAuth = null;
+            clearInterval(syncInterval);
+            return null;
+          }
+          return r.json();
+        })
+        .then(data => {
+          if (!data) return;
+          const oldRevenue = totalRevenue;
+          if (data && data.rooms) {
+            rooms = data.rooms;
+            history = data.history || [];
+            totalRevenue = data.totalRevenue || 0;
+            operationalTasks = data.operationalTasks || [];
 
-    if (!response.ok) throw new Error('Servidor no disponible: HTTP ' + response.status);
-
-    const data = await response.json();
-
-    // Aquí está la magia: si no hay datos, rellenamos con los de fábrica
-    if (!data.rooms || data.rooms.length === 0) {
-        rooms = generarDepartamentos();
-        operationalTasks = generarTareasEjemplo();
-        totalRevenue = 0;
-        history = [];
-        await saveData(); // Esto guarda las 100 habitaciones en Supabase por primera vez
-    } else {
-        rooms = data.rooms;
-        history = data.history || [];
-        totalRevenue = data.totalRevenue || 0;
-        operationalTasks = data.operationalTasks || [];
-    }
-    return rooms.length > 0;
-}
-
-function showToast(msg, type = 'success') {
-    const t = document.createElement('div');
-    t.className = `toast toast--${type}`;
-    t.innerHTML = `
-        <span class="toast_icon">
-            <i class="fas fa-${type === 'success' ? 'check' : 'exclamation-circle'}"></i>
-        </span>
-        <span class="toast_msg">${msg}</span>
-    `;
-    document.getElementById('toastContainer').appendChild(t);
-    setTimeout(() => {
-        t.style.opacity = '0';
-        setTimeout(() => t.remove(), 300);
+            // Rerender si cambió algo
+            if (oldRevenue !== totalRevenue || history.length > 0) {
+              console.log('Sincronización: totalRevenue =', totalRevenue);
+              renderAll();
+            }
+          }
+        })
+        .catch(e => console.error('Error sincronizando:', e));
     }, 3000);
-}
+  }
 
-function showConfirm(title, text) {
+  function pedirCredenciales() {
+    const user = prompt('Usuario:');
+    if (!user) return false;
+    const pass = prompt('Contraseña:');
+    if (!pass) return false;
+    apiAuth = { user, pass };
+    return true;
+  }
+
+  // ============================================================
+  //  TOAST & CONFIRM
+  // ============================================================
+  function showToast(msg, type='success') {
+    const t = document.createElement('div'); t.className = `toast toast--${type}`;
+    t.innerHTML = `<span class="toast__icon"><i class="fas fa-${type==='success'?'check':'exclamation'}-circle"></i></span><span class="toast__message">${esc(msg)}</span>`;
+    $('toastContainer').appendChild(t);
+    setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 300); }, 3000);
+  }
+
+  function showConfirm(title, text) {
     return new Promise(resolve => {
       confirmResolve = resolve;
       $('confirmTitle').textContent = title;
@@ -2019,13 +1982,20 @@ function showConfirm(title, text) {
   function renderHistory() {
     const monthStart = new Date(revenueMonth.getFullYear(), revenueMonth.getMonth(), 1);
     const monthEnd = new Date(revenueMonth.getFullYear(), revenueMonth.getMonth() + 1, 0);
+    console.log('renderHistory: total history items =', history.length, 'totalRevenue =', totalRevenue);
     const filteredHistory = history.filter(h => {
-      if (!h.timestamp) return false;
+      if (!h.timestamp) {
+        console.warn('Item sin timestamp:', h);
+        return false;
+      }
       const d = new Date(h.timestamp);
-      return d >= monthStart && d <= monthEnd;
+      const isInMonth = d >= monthStart && d <= monthEnd;
+      if (isInMonth) console.log('Historia incluida:', h);
+      return isInMonth;
     });
+    console.log('Historial filtrado:', filteredHistory.length, 'items');
 
-    const monthTotal = filteredHistory.reduce((sum, h) => sum + h.total, 0);
+    const monthTotal = filteredHistory.reduce((sum, h) => sum + (h.total || 0), 0);
     $('revenueMonthTotal').textContent = currencyFormatter.format(monthTotal);
     $('revenueMonthLabel').textContent = formatMonthYear(revenueMonth);
 
@@ -2137,91 +2107,61 @@ function showConfirm(title, text) {
   // ============================================================
   //  EXPORT / RESET
   // ============================================================
-  $('exportBtn').addEventListener('click', function() {
-    const data = { rooms, history, totalRevenue, operationalTasks };
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `backup-aparthotel-${todayStr()}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-    showToast('Exportado correctamente', 'success');
-  });
-
   $('exportExcelBtn').addEventListener('click', exportToExcel);
 
   $('resetBtn').addEventListener('click', async function() {
-    const ok = await showConfirm('Reiniciar sistema', 'Se perderán todos los datos. ¿Continuar?');
+    const password = prompt('Ingresa la clave de administrador:');
+    if (password === null) return;
+    if (password !== 'admin') {
+      showToast('Clave incorrecta', 'error');
+      return;
+    }
+    const ok = await showConfirm('Desocupar departamentos', 'Se dejarán todos los departamentos sin ocupar y se limpiarán los ingresos. ¿Continuar?');
     if (!ok) return;
-    rooms = generarDepartamentos();
-    operationalTasks = generarTareasEjemplo();
+    rooms.forEach(room => {
+      room.status = 'available';
+      room.guest = null;
+      room.nights = 0;
+      room.checkinDate = null;
+      room.checkoutDate = null;
+      room.email = '';
+      room.phone = '';
+      room.document = '';
+      room.persons = 1;
+      room.acompanantes = [];
+      room.notes = '';
+    });
     history = [];
     totalRevenue = 0;
     revenueMonth = new Date();
     revenueMonth.setDate(1);
-    calendarYear = new Date().getFullYear();
-    calendarMonth = new Date().getMonth();
-    selectedDay = null;
     saveData();
     renderAll();
-    showToast('Sistema reiniciado', 'success');
+    showToast('Sistema reiniciado - Departamentos disponibles e ingresos en cero', 'success');
   });
 
   // ============================================================
-  //  INICIO (CONECTADO A BACKEND PYTHON)
+  //  INICIO
   // ============================================================
-  async function initApp() {
-    // Un único punto de login: si ya hay token de esta sesión no se pregunta
-    // nada, y si no lo hay se pide una sola vez aquí.
-    if (!asegurarToken()) {
-      showToast('Acceso denegado: se requieren credenciales', 'error');
+  (async () => {
+    if (!pedirCredenciales()) {
+      showToast('Se requieren credenciales', 'error');
       return;
     }
-    try {
-      const hasData = await loadData();
-      if (!hasData) {
-        // Primer arranque: sembramos el edificio y lo subimos a la nube.
-        rooms = generarDepartamentos();
-        operationalTasks = generarTareasEjemplo();
-        history = [];
-        totalRevenue = 0;
-        await saveData();
-      }
-    } catch (err) {
-      console.error("No se pudo cargar desde la nube:", err);
-      showToast('Sin conexión con el servidor: los cambios no se guardarán', 'error');
-      // Vista local de sólo lectura. No llamamos a saveData() para no
-      // sobrescribir los datos de la nube con este estado generado.
+    const dataLoaded = await loadData();
+    if (!dataLoaded) {
       rooms = generarDepartamentos();
       operationalTasks = generarTareasEjemplo();
       history = [];
       totalRevenue = 0;
+      saveData();
     }
     renderAll();
-  }
+    setupRealtimeSync();
+    showToast('Conectado al servidor', 'success');
+  })();
 
-  initApp();
-
-  // ============================================================
-  //  PWA: REGISTRO DEL SERVICE WORKER
-  // ============================================================
-  // En el evento 'load' y no antes: registrarlo durante el arranque competiria
-  // por ancho de banda con la carga inicial del panel. Si falla, se avisa por
-  // consola y la app sigue funcionando igual — el service worker solo anade
-  // velocidad y modo offline, no es necesario para operar.
-  if ('serviceWorker' in navigator) {
-    window.addEventListener('load', function() {
-      navigator.serviceWorker.register('/service-worker.js')
-        .then(function(reg) {
-          console.log('Service worker registrado. Scope:', reg.scope);
-        })
-        .catch(function(err) {
-          console.warn('No se pudo registrar el service worker:', err);
-        });
-    });
-  }
 })();
-  </script>
+</script>
 </body>
 </html>
