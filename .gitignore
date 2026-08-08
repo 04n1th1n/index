@@ -12,10 +12,18 @@ __pycache__/
 .env
 .env.local
 *.key
+*.jks
+
+# Node.js (proyecto Capacitor): se reconstruye con `npm install`
+node_modules/
+
+# Android: artefactos de build y APKs firmados (generados por Capacitor/Gradle)
+android/app/release/
 
 # Estado de ejecucion, no codigo: main.py lo regenera si falta
 data.json
 backups/
+scratch/temp_data.json
 
 # Editores y sistema operativo
 .vscode/

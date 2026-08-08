@@ -1,0 +1,26 @@
+{
+  "name": "hotel_management_system",
+  "version": "1.0.0",
+  "description": "Sistema de gestión para un aparthotel de 100 departamentos (10 pisos × 10 unidades): check-in y check-out, ocupación, facturación e ingresos.",
+  "main": "service-worker.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/04n1th1n/index.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/04n1th1n/index/issues"
+  },
+  "homepage": "https://github.com/04n1th1n/index#readme",
+  "dependencies": {
+    "@capacitor/android": "^8.5.0",
+    "@capacitor/cli": "^8.5.0",
+    "@capacitor/core": "^8.5.0"
+  }
+}

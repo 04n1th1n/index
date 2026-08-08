@@ -1,0 +1,13 @@
+{
+  "appId": "com.aparthotelparos.app",
+  "appName": "Aparthotel Paros",
+  "webDir": "public",
+  "server": {
+    "androidScheme": "https"
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 0
+    }
+  }
+}

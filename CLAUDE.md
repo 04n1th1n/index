@@ -202,3 +202,13 @@ own explicit route instead, and `/icons/{name}` checks `name` against the
 - All user-facing strings and prompts are in **Spanish**; code identifiers, methods,
   and comments are in English.
 - Currency is CLP formatted as `$120.000` (dot thousands separator, no decimals).
+
+## Interoperability with IDE Assistant
+
+This project is co-managed by **Android Studio Assistant** (the IDE Assistant) and **Claude Code CLI**.
+
+- **Shared Memory**: Always read `IDE_CONTEXT.md` at the start of a session to understand the current goals and status discussed in the IDE.
+- **Bi-directional Updates**:
+    - Before finishing a task, update `IDE_CONTEXT.md` with a brief summary of your changes.
+    - If you encounter a complex issue that requires IDE-side debugging, leave a note in `IDE_CONTEXT.md` for the IDE Assistant.
+- **Workflow**: The IDE Assistant handles UI, complex refactoring, and project structure, while Claude Code handles rapid CLI tasks, git operations, and script executions.
